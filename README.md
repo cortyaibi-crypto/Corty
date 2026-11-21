@@ -19,23 +19,32 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
   quotes to LF, a stray CR dropped, a line break ending the field).
 - Within a text literal no raw quote byte can appear (every quote is `\"` there), so a field's end, a
   record's end and the literal's own end are all found on the escaped bytes directly.
-- The reader is a small WASM module (`csv2.wat`, built with wabt, carried in `fast.mjs` as base64) and
-  it **streams**: `cases.json` is read in 768 KiB windows through the module's own memory, and each
-  case's answer is written out of fixed regions of that memory as soon as the case ends. No 11 MB
-  input buffer and no 12 MB answer buffer is ever faulted in, and no answer byte is copied twice.
+- The reader is a small WASM module (`csv4.wat`, built with wabt, carried in `fast.mjs` as base64) and
+  it **streams**: `cases.json` is read in windows (768 KiB) through the module's own memory, and each
+  case's answer is written out of fixed regions of that memory as soon as the case ends, in one
+  `writev` a case. No 11 MB input buffer and no 12 MB answer buffer is ever faulted in, and no answer
+  byte is copied twice.
 - The module is resumable: it stops wherever a window ends and continues where it left off, so a text
   may straddle any number of windows.
-- Its inner loop is one `v128` load, one `v128` store and one SIMD test a block; the store is rewound to
-  the block's first comma, backslash or quote, so a field costs one test and one copy rather than a
-  character at a time. Inside a quoted field a comma is a byte like any other, so that loop only looks
-  for a backslash or the text's end, and a comma between two plain fields is handled without a call.
+- Its inner loop masks **64 bytes at a time**: four `v128` loads, one test for each of comma, backslash
+  and the raw quote that ends the literal, shifted together into one 64-bit word. That word is then
+  consumed event by event — one `ctz`, one 16-byte copy at the event, one 3-byte separator — so the
+  old loop's load, compare, bitmask and `ctz` on **every** block becomes one `ctz` on a word that is
+  already there.
+- The mask follows the reading mode: inside a quoted field only a backslash (and the literal's raw
+  quote) is an event, and outside quotes the comma dominates by far. Two loops rather than one, so
+  neither dispatch chain has a branch whose direction is close to even. A healthy field's separators,
+  a quoted field's opening, its closing quote, a doubled quote, CRLF, LF and a stray CR are each
+  handled where they occur; a record's end and the next record's start are written in place.
+- p, w, the field's length, the mode, the quote state, the field count, the width and the
+  unterminated-quote checkpoint live in **locals** and reach the module's globals only when the loop
+  leaves (a refill, the last bytes, a case's end), so the hot path touches no global.
 - Everything a case needs — the first record's fields, the rows after it, the errors — is written into
   its own region, so the answer's text is assembled at write time: the first record is `columns` or the
   first row, which only the header flag at the case's end decides.
-- Before the file is read, the reader runs once over a small text of its own (about 80 KiB of plain,
+- Before the file is read, the reader runs once over a small text of its own (about 30 KiB of plain,
   quoted and multi-line fields) so V8's optimizing compiler has the loop before the real work; the
-  answers that pass writes are thrown away. Measured here: the parse of the practice set goes from
-  17.0 ms to 13.0 ms, for 1.5 ms of warm-up.
+  answers that pass writes are thrown away.
 - If `cases.json` is not the shape the reader expects (spaced JSON is fine; anything stranger, or a
   quoted field longer than 64 KiB), `main.ts` falls back to `JSON.parse` plus `run()` from `solve.js` —
   the same answers, slower.
@@ -46,14 +55,17 @@ reference's answer for every input, and it is what the fallback path uses.
 ## Verification
 
 - The official local grade (`cli/makefun.mjs grade-local --driver process`) passes every case: 6 of 6
-  identical, two executions byte for byte.
-- The same answers through the streaming path (768 KiB, 64 KiB and 4 KiB windows) as through one whole
-  window: byte for byte, on the practice set and on freshly drawn instances.
-- Every text over `a , " \r \n` up to six characters long, and over `a , " \r \n \` up to five, both
-  header flags (349,412 cases): identical to `csv-reader 1.0.0` on every one.
-- 3,400 random broken-CSV case sets (empty fields, doubled quotes, junk after a closing quote, quotes
-  that never close, stray CRs, CRLF and LF, BOM, blank lines, short and long rows, non-ASCII UTF-8):
-  identical to `csv-reader 1.0.0` on every one.
+  identical, both executions byte for byte, and the L1 regrade reproduces the result.
+- Every text over `, a " \r \n` up to five characters long (both header flags, 7,812 cases), read both
+  through the fast loop (padded so the loop, not the tail, reads the interesting text) and through the
+  tail: identical to `csv-reader 1.0.0` on every one.
+- 4,000 random texts of 60 to 200 characters over `, a " \r \n` and non-ASCII UTF-8: identical.
+- Freshly drawn instances from the kit's own generator (3 seeds, 18 cases) and the practice set:
+  identical to the reference, and the practice set's answer bytes are the ones the previous build wrote.
+- A quote opens a field only as the field's **first byte**: a stray CR dropped at a field's start is
+  read the way the reference reads it, and the quote after it is a literal character (an earlier build
+  opened a quoted field there; the reference does not).
+- The same answers through 768 KiB, 64 KiB and 4 KiB windows as through one whole window.
 
 ## Licence
 
