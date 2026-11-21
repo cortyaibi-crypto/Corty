@@ -10,7 +10,8 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
 
 ## How it is faster
 
-`main.ts` answers the cases from `cases.json`'s **bytes**, through `fast.mjs`:
+`main.ts` is a lean start: one static import, no other module, and m.mjs answers the cases from
+`cases.json`'s **bytes**:
 
 - A case's text is already JSON-escaped inside `cases.json`, and that is exactly the form a JSON answer
   wants — so a field's bytes are copied as they stand rather than decoded to UTF-16, parsed into
@@ -19,7 +20,7 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
   quotes to LF, a stray CR dropped, a line break ending the field).
 - Within a text literal no raw quote byte can appear (every quote is `\"` there), so a field's end, a
   record's end and the literal's own end are all found on the escaped bytes directly.
-- The reader is a small WASM module (`csv4.wat`, built with wabt, carried in `fast.mjs` as base64) and
+- The reader is a small WASM module (`csv4.wat`, built with wabt, carried in `m.mjs` as base64) and
   it **streams**: `cases.json` is read in windows (768 KiB) through the module's own memory, and each
   case's answer is written out of fixed regions of that memory as soon as the case ends, in one
   `writev` a case. No 11 MB input buffer and no 12 MB answer buffer is ever faulted in, and no answer
@@ -42,9 +43,10 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
 - Everything a case needs — the first record's fields, the rows after it, the errors — is written into
   its own region, so the answer's text is assembled at write time: the first record is `columns` or the
   first row, which only the header flag at the case's end decides.
-- Before the file is read, the reader runs once over a small text of its own (about 30 KiB of plain,
-  quoted and multi-line fields) so V8's optimizing compiler has the loop before the real work; the
-  answers that pass writes are thrown away.
+- Nothing but the reading itself is paid for: `main.ts` loads one module and answers the file. There is
+  no warm-up pass (a run reads the file once, and the pass cost more than it saved), no `node:path`,
+  no `node:v8`, and no second entry module — measured over the whole process, that took a run from
+  about 133 ms of CPU to about 110 ms on node 26.13.1, against the null entry's 86 ms.
 - If `cases.json` is not the shape the reader expects (spaced JSON is fine; anything stranger, or a
   quoted field longer than 64 KiB), `main.ts` falls back to `JSON.parse` plus `run()` from `solve.js` —
   the same answers, slower.

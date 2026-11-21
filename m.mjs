@@ -40,7 +40,7 @@ function warmBytes() {
     '-1,2.50,2026-01-02,AB-1234,word,phrase here,#42,50%,x_1,A&B',
   ].join('\n') + '\n';
   let text = 'h1,h2,h3,h4,h5,h6,h7,h8,h9,h10\n';
-  for (let i = 0; i < 700; i++) text += rows;
+  for (let i = 0; i < 175; i++) text += rows;
   return Buffer.from(JSON.stringify([{ id: 'warm', input: { text, header: true } }]), 'utf8');
 }
 
@@ -135,7 +135,6 @@ export function answersBytes(src) {
 /** The answers for every case of the file at `inPath`, written to `outPath`. */
 export function answersToFile(inPath, outPath) {
   init();
-  warm();
   const fd = openSync(inPath, 'r');
   const size = fstatSync(fd).size;
   const ofd = openSync(outPath, 'w');
