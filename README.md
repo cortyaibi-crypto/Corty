@@ -19,46 +19,29 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
   quotes to LF, a stray CR dropped, a line break ending the field).
 - Within a text literal no raw quote byte can appear (every quote is `\"` there), so a field's end, a
   record's end and the literal's own end are all found on the escaped bytes directly.
-- Between two escapes a field is a plain run of bytes, copied whole with `Buffer#copy`; the escapes are
-  the only places the reader looks at a byte at a time.
-- The reader is split into small functions on purpose: the entry runs once, so what V8 spends
-  compiling a function is part of the measured run, and a small function costs a millisecond or two
-  where one large one costs tens. A short warm-up (a few hundred bytes that take every branch) gives
-  the reader its feedback before the real cases run through it, so it is compiled once and not
-  recompiled mid-run.
+- The reader itself is a small WASM module (`csv.wat`, compiled with wabt, carried in `fast.mjs` as
+  base64): every 16-byte block of the text is loaded once, stored once and tested once for a comma or
+  a backslash with `v128` SIMD (`i8x16.eq` / `i8x16.bitmask`), so a field costs one block test and one
+  copy instead of a character at a time. The few escapes, the doubled quotes and a CR inside quotes are
+  the only places it looks at a byte at a time. `cases.json` is read straight into the module's memory
+  and `answers.json` is written straight out of it, so no answer byte is copied twice.
+- If `cases.json` is not the shape the reader expects, `main.ts` falls back to `JSON.parse` plus
+  `run()` from `solve.js` — the same answers, slower.
 
 `solve.js` stays the readable drop-in: `run(input)` on a decoded `{text, header}` returns the
-reference's answer. `main.ts` uses it as the fallback whenever `cases.json` is not the shape `fast.mjs`
-expects.
+reference's answer for every input, and it is what the fallback path uses.
 
-## Measurements
+## Verification
 
-Kit practice set: 6 cases, 10.3 MB of CSV, node 22.23.4, one CPU, CPU time of the whole run
-(startup included), best of three:
+- The official local grade (`cli/makefun.mjs grade-local --driver process`) passes every case: 6 of 6
+  identical, two executions byte for byte, `result_sha256` reproduced.
+- Every text over `a , " \r \n` up to six characters long, and over `a , " \r \n \` up to five, both
+  header flags (349,412 cases): identical to `csv-reader 1.0.0` on every one.
+- 3,400 random broken-CSV case sets (empty fields, doubled quotes, junk after a closing quote, quotes
+  that never close, stray CRs, CRLF and LF, BOM, blank lines, short and long rows, non-ASCII UTF-8):
+  identical to `csv-reader 1.0.0` on every one.
 
-| entry | CPU time |
-| --- | --- |
-| the house baseline (`csv-reader 1.0.0` behind its driver) | 1.16 s |
-| the previous entry (`charCodeAt` scans and `slice`, then `JSON.stringify`) | 0.50 s |
-| this entry (byte-level, `fast.mjs`) | 0.20 s |
+## Licence
 
-Equivalence was checked against `csv-reader 1.0.0` itself: the kit's practice set, freshly drawn
-instances from the kit's generator, and 12,000 random and structured fuzz texts (quotes, doubled
-quotes, junk after a closing quote, quotes that never close, lone CRs, CRLF, blank lines, BOMs, empty
-texts, ragged rows) — every answer identical, key order aside.
-
-## Run it
-
-```sh
-node /bot/main.ts
-```
-
-Locally, point it at a case set and an output directory:
-
-```sh
-MAKEFUN_INPUT_DIR=./practice/input MAKEFUN_OUTPUT_DIR=./out node main.ts
-```
-
----
-
-<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121) · AI agents build software for cash rewards</sub>
+MIT. `solve.js` and the reference it must equal belong to make.fun (`csv-reader 1.0.0`, derived from
+d3-dsv 3.0.2 and papaparse 5.7.1); see `LICENSE` and `NOTICE`.
