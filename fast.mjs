@@ -6,95 +6,167 @@
 // JSON.stringify. Inside a text literal no raw quote byte can appear (every quote is \"), so the literal's end is a
 // raw quote outside an escape.
 //
-// The module below is the reader itself (csv.wat, compiled with wabt): every 16-byte block of a text is loaded once,
-// stored once and tested once for a comma or a backslash with v128 SIMD, so a field costs one block test and one copy
-// rather than a character at a time. Its scratch layout: errors at 0 (65536 records of 24 bytes), long_row extra bytes
-// at 1572864, columns at 3670016, literal strings at 4718592, the input at IN_PTR, then one case's answer at OUT_PTR.
-// Each case is answered into that one buffer and written out at once, so an answer's bytes are touched once.
+// The module (csv2.wat, built with wabt) is resumable: it reads cases.json in whatever window the driver hands it and
+// writes each case's answer into fixed regions of its own memory, so the file is read in small reusable chunks and no
+// large buffer is ever faulted in. Its inner loop is one 16-byte load, one 16-byte store and one SIMD test a block,
+// with the store rewound to the block's first comma, backslash or quote.
 import { openSync, readSync, writeSync, closeSync, fstatSync } from 'node:fs';
 
-const B64 = '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';
+const B64 = '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';
 
-const IN_PTR = 5242880;
-const PAGE = 65536;
+// The module's memory layout, as csv2.wat has it.
+const BASE_COL = 524288;
+const BASE_ROWS = 1048576;
+const BASE_ERRBUF = 9437184;
+const BASE_IN = 10485760;
+const CHUNK = Number(process.env.CSV_CHUNK ?? 786432);
 
 let mem = null;
 let ex = null;
 
-/** The module, made once, and its memory grown to hold `bytes`. */
-function setup(bytes) {
-  if (ex === null) {
-    ex = new WebAssembly.Instance(new WebAssembly.Module(Buffer.from(B64, 'base64')), {}).exports;
-    mem = ex.m;
-  }
-  const pages = Math.ceil(bytes / PAGE);
-  const have = mem.buffer.byteLength / PAGE;
-  if (pages > have) mem.grow(pages - have);
+function init() {
+  if (ex !== null) return ex;
+  ex = new WebAssembly.Instance(new WebAssembly.Module(Buffer.from(B64, 'base64')), {}).exports;
+  mem = ex.m;
   return ex;
 }
 
-/** Every case's answer, concatenated as answers.json holds them, in one Buffer. Throws when the file is not as expected. */
-export function answersBytes(src) {
-  const inLen = src.length;
-  const outPtr = IN_PTR + ((inLen + 63) & ~63);
-  const end = IN_PTR + inLen;
-  const e = setup(outPtr + 65536);
-  Buffer.from(mem.buffer, IN_PTR, inLen).set(src);
-  const parts = [];
-  let q = IN_PTR;
-  for (;;) {
-    const a = e.findcase(q, end);
-    if (a < 0) break;
-    const textEnd = e.aend.value;
-    const hdr = e.hdrg.value;
-    setup(outPtr + 6 * (textEnd - a) + 4194304);
-    const endW = e.conv(a, textEnd, hdr, outPtr);
-    if (endW < 0) throw new Error('cases.json: the reader could not place its bytes');
-    parts.push(Buffer.from(new Uint8Array(mem.buffer, outPtr, endW - outPtr)));
-    q = textEnd + 12;
-  }
-  if (parts.length === 0) throw new Error('cases.json: no cases');
-  return Buffer.concat([Buffer.from('['), ...parts.flatMap((p, i) => (i === 0 ? [p] : [Buffer.from(','), p])), Buffer.from(']')]);
+function need(bytes) {
+  const have = mem.buffer.byteLength;
+  if (bytes > have) mem.grow(Math.ceil((bytes - have) / 65536));
 }
 
-/** The answers for every case of the file at `inPath`, written to `outPath`; read and written through the module's memory. */
+/** The case just read, as answers.json holds it, appended to `out`: buffers over the module's memory, no copies. */
+function caseParts(out) {
+  const hdr = ex.hdr.value;
+  const nrec = ex.nrec.value;
+  const colLen = ex.colLen.value;
+  const rowLen = ex.rowLen.value;
+  const errLen = ex.errLen.value;
+  const view = mem.buffer;
+  const col = Buffer.from(view, BASE_COL, colLen);
+  const rows = Buffer.from(view, BASE_ROWS, rowLen);
+  const errs = Buffer.from(view, BASE_ERRBUF, errLen);
+  if (nrec === 0) {
+    out.push(Buffer.from('{"columns":' + (hdr === 1 ? '[]' : 'null') + ',"rows":[],"errors":['));
+    out.push(errs);
+    out.push(Buffer.from(']}'));
+    return;
+  }
+  if (hdr === 1) {
+    out.push(Buffer.from('{"columns":['));
+    out.push(col);
+    out.push(Buffer.from('],"rows":['));
+    out.push(rows);
+  } else {
+    out.push(Buffer.from('{"columns":null,"rows":[['));
+    out.push(col);
+    out.push(Buffer.from(rowLen > 0 ? '],' : ']'));
+    if (rowLen > 0) out.push(rows);
+  }
+  out.push(Buffer.from('],"errors":['));
+  out.push(errs);
+  out.push(Buffer.from(']}'));
+}
+
+/** Every case's answer, one JSON array: the answers.json bytes for `src`. Throws when the file is not as expected. */
+export function answersBytes(src) {
+  init();
+  const n = src.length;
+  need(BASE_IN + n + 64);
+  Buffer.from(mem.buffer, BASE_IN, n).set(src);
+  ex.p.value = BASE_IN;
+  ex.e.value = BASE_IN + n;
+  ex.eof.value = 1;
+  ex.st.value = 0;
+  const out = [Buffer.from('[')];
+  for (let i = 0; ; i++) {
+    const r = ex.step();
+    if (r === 2) break;
+    if (r === 1) {
+      if (i > 0) out.push(Buffer.from(','));
+      const parts = [];
+      caseParts(parts);
+      for (const b of parts) out.push(Buffer.from(b));
+      continue;
+    }
+    throw new Error('csv reader: the bytes are not as expected (' + r + ')');
+  }
+  if (out.length === 1) throw new Error('cases.json: no cases');
+  out.push(Buffer.from(']'));
+  return Buffer.concat(out);
+}
+
+/** The answers for every case of the file at `inPath`, written to `outPath`. */
 export function answersToFile(inPath, outPath) {
+  init();
   const fd = openSync(inPath, 'r');
   const size = fstatSync(fd).size;
-  const outPtr = IN_PTR + ((size + 63) & ~63);
-  const end = IN_PTR + size;
-  const e = setup(outPtr + 65536);
-  const inView = Buffer.from(mem.buffer, IN_PTR, size);
-  let off = 0;
-  while (off < size) {
-    const n = readSync(fd, inView, off, size - off, off);
-    if (n <= 0) break;
-    off += n;
-  }
-  closeSync(fd);
-  if (off !== size) throw new Error('cases.json: read short');
-  const out = openSync(outPath, 'w');
-  try {
-    let q = IN_PTR;
-    let cases = 0;
-    for (;;) {
-      const a = e.findcase(q, end);
-      if (a < 0) break;
-      const textEnd = e.aend.value;
-      const hdr = e.hdrg.value;
-      setup(outPtr + 6 * (textEnd - a) + 4194304);
-      const endW = e.conv(a, textEnd, hdr, outPtr);
-      if (endW < 0) throw new Error('cases.json: the reader could not place its bytes');
-      if (cases === 0) writeSync(out, '[');
-      else writeSync(out, ',');
-      writeSync(out, Buffer.from(mem.buffer, outPtr, endW - outPtr));
-      cases++;
-      q = textEnd + 12;
+  const ofd = openSync(outPath, 'w');
+  need(BASE_IN + CHUNK);
+  let pos = 0;      // bytes read from the file
+  let filled = 0;   // bytes in the window at BASE_IN
+  let eof = 0;
+  ex.p.value = BASE_IN;
+  ex.e.value = BASE_IN;
+  ex.eof.value = 0;
+  ex.st.value = 0;
+
+  const refill = () => {
+    const p0 = ex.p.value;
+    let hold = p0;
+    if (ex.ckLive.value === 1 && ex.ckP.value < hold) {
+      if (p0 - ex.ckP.value > 65536) throw new Error('csv reader: a quoted field spans too much of the file');
+      hold = ex.ckP.value;
     }
-    if (cases === 0) throw new Error('cases.json: no cases');
-    writeSync(out, ']');
+    const tail = BASE_IN + filled - hold;
+    if (hold !== BASE_IN) {
+      Buffer.from(mem.buffer, hold, tail).copy(Buffer.from(mem.buffer, BASE_IN, tail));
+      ex.p.value = BASE_IN + (p0 - hold);
+      if (ex.ckLive.value === 1) ex.ckP.value = BASE_IN + (ex.ckP.value - hold);
+    }
+    const room = CHUNK - tail;
+    if (room < 16) throw new Error('csv reader: the window is full');
+    const n = readSync(fd, Buffer.from(mem.buffer, BASE_IN + tail, room), 0, room, pos);
+    pos += n;
+    filled = tail + n;
+    ex.e.value = BASE_IN + filled;
+    if (n === 0) {
+      eof = 1;
+      ex.eof.value = 1;
+    }
+  };
+
+  try {
+    writeSync(ofd, Buffer.from('['));
+    let first = true;
+    let lastP = -1;
+    for (;;) {
+      const r = ex.step();
+      if (r === 0) {
+        if (eof !== 0 && ex.p.value === lastP) throw new Error('csv reader: the bytes are not as expected');
+        refill();
+        if (eof === 1 && ex.p.value === lastP) throw new Error('csv reader: the bytes are not as expected');
+        lastP = ex.p.value;
+        continue;
+      }
+      if (r === 1) {
+        if (!first) writeSync(ofd, Buffer.from(','));
+        const out = [];
+        caseParts(out);
+        for (const b of out) writeSync(ofd, b);
+        first = false;
+        lastP = -1;
+        continue;
+      }
+      if (r === 2) break;
+      throw new Error('csv reader: the bytes are not as expected (' + r + ')');
+    }
+    if (first) throw new Error('cases.json: no cases');
+    writeSync(ofd, Buffer.from(']'));
   } finally {
-    closeSync(out);
+    closeSync(fd);
+    closeSync(ofd);
   }
   return 1;
 }
