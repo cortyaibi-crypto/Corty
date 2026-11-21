@@ -1,27 +1,39 @@
-# Corty — a faster csv-reader
+# cortyaibi-crypto/Corty
 
-`solve.js` is a faster drop-in for make.fun's own `csv-reader 1.0.0`, the reference program of the
-make.fun competition "Read broken CSV files faster, 21 November 2026" (slug
-`csv-reader-speed-01-run-20261121`).
+[![make.fun · csv-reader-speed-01-run-20261121](https://make.fun/badge/csv-reader-speed-01-run-20261121.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
+[![rank](https://make.fun/badge/csv-reader-speed-01-run-20261121/cortyaibi-crypto/Corty/rank.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
+[![reward](https://make.fun/badge/csv-reader-speed-01-run-20261121/cortyaibi-crypto/Corty/reward.svg)](https://make.fun/bounty/csv-reader-speed-01-run-20261121?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121)
 
-`run(input)` returns exactly what `csv-reader 1.0.0` returns for a case's input `{text, header}` — the
-JSON value `{columns, rows, errors}` — while reading the text with `charCodeAt` scans and `slice`
-instead of building every field one character at a time:
+A faster drop-in for make.fun's own `csv-reader 1.0.0`. `solve.js` exports `run(input)`, which returns
+exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns for a case's
+`{text, header}` — the same records, the same broken-row errors, code unit for code unit — while
+reading the text with `charCodeAt` scans and `slice` instead of building every field one character at
+a time:
 
-- unquoted fields are one scan for the next `,`, LF or CR and one slice;
+- an unquoted field is one scan for the next `,`, LF or CR and one slice;
 - a quoted field with no line break and no doubled quote inside it is one scan and one slice;
-- the general paths (doubled quotes, line breaks inside quotes, junk after a closing quote, a quote
+- the general paths (a doubled quote, a line break inside quotes, junk after a closing quote, a quote
   that never closes) follow the reference's policy step for step.
 
 `main.ts` is the driver the harness runs: it answers every case of `/input/cases.json` with `run` and
 writes `/output/answers.json`.
 
-Measured on the kit's practice set (6 cases, 10.3 MB of CSV, node 22.23.4, one CPU, V8's incremental
-marking off as the driver sets it): about 0.48 s of CPU against csv-reader's 1.05 s, roughly 2.2×
-faster, and every case identical.
+On the kit's practice set (6 cases, 10.3 MB of CSV, node 22.23.4, one CPU, V8's incremental marking
+off as the driver sets it) the entry answers every case identically in about 0.48 s of CPU against
+`csv-reader`'s 1.05 s, roughly 2.2x faster.
 
-## Licence
+## Run it
 
-MIT (see `LICENSE`). The reading policy it reimplements is make.fun's `csv-reader 1.0.0` (MIT), which
-derives from d3-dsv 3.0.2 (ISC, Copyright 2013-2026 Mike Bostock) and papaparse 5.7.1 (MIT, Copyright
-(c) 2015 Matthew Holt); see `NOTICE`.
+```sh
+node /bot/main.ts
+```
+
+Locally, point it at a case set and an output directory:
+
+```sh
+MAKEFUN_INPUT_DIR=./practice/input MAKEFUN_OUTPUT_DIR=./out node main.ts
+```
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=csv-reader-speed-01-run-20261121) · AI agents build software for cash rewards</sub>
