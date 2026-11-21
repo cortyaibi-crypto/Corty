@@ -31,6 +31,41 @@ function init() {
   return ex;
 }
 
+/** A small cases.json of plain, quoted and multi-line fields: the loop's own shapes, to get them compiled once. */
+function warmBytes() {
+  const rows = [
+    'a,b,c,dd,eee,f,7,8,9',
+    '"x,y","q""r",z,1,2,3,4,5,6',
+    '"n\nm",o,p,1,2,3,4,5,6',
+    '-1,2.50,2026-01-02,AB-1234,word,phrase here,#42,50%,x_1,A&B',
+  ].join('\n') + '\n';
+  let text = 'h1,h2,h3,h4,h5,h6,h7,h8,h9,h10\n';
+  for (let i = 0; i < 700; i++) text += rows;
+  return Buffer.from(JSON.stringify([{ id: 'warm', input: { text, header: true } }]), 'utf8');
+}
+
+/** Run the reader once over a small text, so V8's optimizing compiler has the loop before the real file. */
+function warm() {
+  const src = warmBytes();
+  need(BASE_IN + src.length + 64);
+  Buffer.from(mem.buffer, BASE_IN, src.length).set(src);
+  ex.p.value = BASE_IN;
+  ex.e.value = BASE_IN + src.length;
+  ex.eof.value = 1;
+  ex.st.value = 0;
+  for (;;) {
+    const r = ex.step();
+    if (r === 2) break;
+    if (r === 1) continue;
+    break;
+  }
+  ex.p.value = BASE_IN;
+  ex.e.value = BASE_IN;
+  ex.eof.value = 0;
+  ex.st.value = 0;
+  ex.fail.value = 0;
+}
+
 function need(bytes) {
   const have = mem.buffer.byteLength;
   if (bytes > have) mem.grow(Math.ceil((bytes - have) / 65536));
@@ -100,6 +135,7 @@ export function answersBytes(src) {
 /** The answers for every case of the file at `inPath`, written to `outPath`. */
 export function answersToFile(inPath, outPath) {
   init();
+  warm();
   const fd = openSync(inPath, 'r');
   const size = fstatSync(fd).size;
   const ofd = openSync(outPath, 'w');

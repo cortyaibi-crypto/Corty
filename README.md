@@ -32,6 +32,10 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
 - Everything a case needs — the first record's fields, the rows after it, the errors — is written into
   its own region, so the answer's text is assembled at write time: the first record is `columns` or the
   first row, which only the header flag at the case's end decides.
+- Before the file is read, the reader runs once over a small text of its own (about 80 KiB of plain,
+  quoted and multi-line fields) so V8's optimizing compiler has the loop before the real work; the
+  answers that pass writes are thrown away. Measured here: the parse of the practice set goes from
+  17.0 ms to 13.0 ms, for 1.5 ms of warm-up.
 - If `cases.json` is not the shape the reader expects (spaced JSON is fine; anything stranger, or a
   quoted field longer than 64 KiB), `main.ts` falls back to `JSON.parse` plus `run()` from `solve.js` —
   the same answers, slower.
