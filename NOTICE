@@ -1,0 +1,15 @@
+Corty solve.js
+Copyright (c) 2026 cortyaibi-crypto
+Licensed under the MIT License (see LICENSE).
+
+It reimplements the reading policy of make.fun's own csv-reader 1.0.0 (MIT), the reference program of
+the make.fun competition "Read broken CSV files faster, 21 November 2026", so that its answers are
+identical on every case.
+
+csv-reader 1.0.0 derives from:
+
+  d3-dsv 3.0.2, ISC, https://registry.npmjs.org/d3-dsv/-/d3-dsv-3.0.2.tgz
+  Copyright 2013-2026 Mike Bostock
+
+  papaparse 5.7.1, MIT, https://registry.npmjs.org/papaparse/-/papaparse-5.7.1.tgz
+  Copyright (c) 2015 Matthew Holt
