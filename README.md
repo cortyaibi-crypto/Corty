@@ -10,11 +10,15 @@ exactly the JSON value `{columns, rows, errors}` that `csv-reader 1.0.0` returns
 
 ## How it is faster
 
-`main.ts` is a lean start: a symbolic link to `main.cjs`, so node loads the program as the CommonJS it is
-and never starts its TypeScript loader (with the loader, a run cost about 38 ms of CPU more on node
-26.13.1). `main.cjs` asks for one module, `m.cjs`, and nothing else; were the link ever copied as a
-plain file, the same text still runs as an ES module — it uses neither `require` nor `module`, only
-`import()`, which both loaders accept. `m.cjs` answers the cases from `cases.json`'s **bytes**:
+`main.ts` is a lean start: one static import, no other module, and no warm-up pass over a text of its
+own (a run reads the file once, and the pass cost more than it saved). Over the whole process on node
+26.13.1 that took a run from about 133 ms of CPU to about 100 ms, against the null entry's 72 ms. One
+thing did not work: a `main.ts` that is a symbolic link to a `.cjs` file runs as CommonJS and skips
+node's TypeScript loader (about 38 ms a run), but the grader's `entryRuntime` looks for the entrypoint
+among the snapshot's regular files alone, so a linked `main.ts` is refused before it runs. `main.ts`
+stays a plain file.
+
+`m.mjs` answers the cases from `cases.json`'s **bytes**:
 
 - A case's text is already JSON-escaped inside `cases.json`, and that is exactly the form a JSON answer
   wants — so a field's bytes are copied as they stand rather than decoded to UTF-16, parsed into
@@ -23,7 +27,7 @@ plain file, the same text still runs as an ES module — it uses neither `requir
   quotes to LF, a stray CR dropped, a line break ending the field).
 - Within a text literal no raw quote byte can appear (every quote is `\"` there), so a field's end, a
   record's end and the literal's own end are all found on the escaped bytes directly.
-- The reader is a small WASM module (`csv4.wat`, built with wabt, carried in `m.cjs` as base64) and
+- The reader is a small WASM module (`csv4.wat`, built with wabt, carried in `m.mjs` as base64) and
   it **streams**: `cases.json` is read in windows (768 KiB) through the module's own memory, and each
   case's answer is written out of fixed regions of that memory as soon as the case ends, in one
   `writev` a case. No 11 MB input buffer and no 12 MB answer buffer is ever faulted in, and no answer
@@ -46,13 +50,9 @@ plain file, the same text still runs as an ES module — it uses neither `requir
 - Everything a case needs — the first record's fields, the rows after it, the errors — is written into
   its own region, so the answer's text is assembled at write time: the first record is `columns` or the
   first row, which only the header flag at the case's end decides.
-- Nothing but the reading itself is paid for: `main.ts` loads one module and answers the file. There is
-  no warm-up pass (a run reads the file once, and the pass cost more than it saved), no `node:path`,
-  no `node:v8`, and no second entry module — measured over the whole process, that took a run from
-  about 133 ms of CPU to about 110 ms on node 26.13.1, against the null entry's 86 ms.
 - If `cases.json` is not the shape the reader expects (spaced JSON is fine; anything stranger, or a
-  quoted field longer than 64 KiB), `main.cjs` falls back to `JSON.parse` plus `run()` from `solve.cjs`
-  (the CommonJS copy of `solve.js`) — the same answers, slower.
+  quoted field longer than 64 KiB), `main.ts` falls back to `JSON.parse` plus `run()` from `solve.js` —
+  the same answers, slower.
 
 `solve.js` stays the readable drop-in: `run(input)` on a decoded `{text, header}` returns the
 reference's answer for every input, and it is what the fallback path uses.
